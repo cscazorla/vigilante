@@ -28,6 +28,31 @@
          +---------+
 
 The capactor is added to debounce the button (104 = 100.000 pF = 0.1 uF)
+
+----------
+PIR SENSOR
+----------
+
+       PRESET POTS
+       +---+ +---+
+       | X | | X |
++------+---+-+---+--------------+
+|                               +-->
+|                               |-->
+|                       +--+    +-->
+|                       |  |    |
+|                       |  |    |
+|                       |  |    |
+|  +---+                |  |    |
+|  +---+                +--+    |
+|                               |
++-----------+-+-+---------------+
+            | | |
+            | | |
+            v v v
+          +5     GND
+             OUT
+
 '''
 
 # AWS S3 boto3 (https://github.com/boto/boto3)
@@ -40,8 +65,8 @@ The capactor is added to debounce the button (104 = 100.000 pF = 0.1 uF)
 # 	region=eu-west-1
 
 # Instructions:
-# 	- source ./pir_motion_sensor.env
-# 	- (sudo -E) python pir_motion_sensor.py
+# 	- source .env
+# 	- (sudo -E) python vigilante.py
 
 import RPi.GPIO as GPIO
 import time
@@ -73,8 +98,8 @@ def setup():
 	GPIO.setwarnings(False)
 	GPIO.setup(ledPin, GPIO.OUT)
 	GPIO.setup(sensorPin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
-	#GPIO.setup(enableButtonPin, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Set enableButtonPin's mode is input, and pull up to high level(3.3V)
-	#GPIO.add_event_detect(enableButtonPin, GPIO.FALLING, callback=toggleSystem,bouncetime=200)
+	GPIO.setup(enableButtonPin, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Set enableButtonPin's mode is input, and pull up to high level(3.3V)
+	GPIO.add_event_detect(enableButtonPin, GPIO.FALLING, callback=toggleSystem,bouncetime=200)
 
 def enableSystem():
 	global systemEnabled
