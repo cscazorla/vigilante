@@ -4,28 +4,36 @@
 
 
 '''
-            +--+
-            |5V|
-            +-++
-              |
-+---+ GPIO0 +-+-+    +---+
-|   +-------+PIR+----+GND+--+
-| R |       +---+    +-+-+  |
-| A |                  |    |
-| S |                  |    |
-| P |                  |    |
-| B | GPIO1 +----+   +-+-+  |
-| E +-------+220R+---+LED|  |
-| R |       +----+   +---+  |
-| R |                       |
-| Y | GPIO2 +---+           |
-|   +----+--+BTN+--+--------+
-+---+    |  +---+  |
-         |         |
-         +---------+
-         |CAPACITOR|
-         |   104   |
-         +---------+
++-----------------------------------------------------+
+| +------------------------------------------------+  |
+| | +-------------------------------------------+  |  |
+| | |    +-----------------------------------+  |  |  |
+| | |    |                       5v          |  |  |  |
+| | |    | +---+                 |           |  |  |  |
+| | |    | |   |  GPIO0       +--+--+        |  |  |  |
+| | |    + | R +--------------+ PIR |        |  |  |  |
+| | | GPIO1| A |              +--+--+        |  |  |  |
+| | |      | S |                 |           |  |  |  |
+| | ++GPIO2| P |              +--+-------+   |  |  |  |
+| |        | B |              | GND      |   |  |  |  |  5v
+| +--+GPIO3| E |              ++--+--+--++   |  |  |  |  +
+|          | R |               |  |  |  |    |  |  |  |  |
++----+GPIO4| R |               +  +  +  +    +  +  +  +  +
+           | Y |               1  3  5  16   11 12 13 14 15
+           |   |   Tx         +---------------------------+
+           |   +---------+    |                           |
+           |   |         |    |           LCD1602         |
+           |   |   Rx    |    |                           |
+           |   +------+  |    +---------------------------+
+           |   |      |  |     2   4  6
+           |   |      |  |     +   +  +
+           +---+      |  |     |   |  |
+                      |  |     +   |  |
+                      |  |   5v    |  |
+                      |  |         |  |
+                      |  +---------+  |
+                      |               |
+                      +---------------+
 
 The capactor is added to debounce the button (104 = 100.000 pF = 0.1 uF)
 
@@ -77,133 +85,99 @@ import os
 import boto3
 from sendgrid.helpers.mail import *
 from time import sleep
+from lcd import LCD
 
 # Main variables
 sensorPin = 11
-ledPin = 12
-enableButtonPin = 13
+pin_rs = 8
+pin_e = 10
+pins_db = [12, 13, 15,16]
 videoDuration = 5 # seconds
 cam = picamera.PiCamera()
 s3 = boto3.resource('s3')
 prevState = False
 currState = False
-systemEnabled = False
 s3BucketName = os.environ.get('s3BucketName')
 s3URL = os.environ.get('s3URL')
 sendGrid = sendgrid.SendGridAPIClient(apikey=os.environ.get('SENDGRID_API_KEY'))
+lcd = None
 
 def setup():
-	print " - Setting up the system."
-	GPIO.setmode(GPIO.BOARD)
-	GPIO.setwarnings(False)
-	GPIO.setup(ledPin, GPIO.OUT)
-	GPIO.setup(sensorPin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
-	GPIO.setup(enableButtonPin, GPIO.IN, pull_up_down=GPIO.PUD_UP) # Set enableButtonPin's mode is input, and pull up to high level(3.3V)
-	GPIO.add_event_detect(enableButtonPin, GPIO.FALLING, callback=toggleSystem,bouncetime=200)
+    global lcd
+    GPIO.setmode(GPIO.BOARD)
+    GPIO.setwarnings(False)
+    GPIO.setup(sensorPin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+    GPIO.setup(pin_e, GPIO.OUT)
+    GPIO.setup(pin_rs, GPIO.OUT)
+    for pin in pins_db:
+        GPIO.setup(pin, GPIO.OUT)
+    lcd = LCD(pin_rs, pin_e, pins_db,GPIO)
 
 def enableSystem():
-	global systemEnabled
-	GPIO.output(ledPin, GPIO.HIGH)
-	systemEnabled = True
-	print " - System up and running."
-	global sendGrid
-	from_email = Email(os.environ.get('FROM_EMAIL'))
-	subject = "Alarm engaged succesfully"
-	to_email = Email(os.environ.get('TO_EMAIL'))
-	content = Content("text/plain", "The alarm has been engaged succesfully.")
-	mail = Mail(from_email, subject, to_email, content)
-	try:
-		response = sendGrid.client.mail.send.post(request_body=mail.get())
-	except Exception as e:
-		print " - Error sending the email notification: {0}".format(e)
-
-def disableSystem():
-	global systemEnabled,currState,prevState
-	GPIO.output(ledPin, GPIO.LOW)
-	GPIO.remove_event_detect(sensorPin)
-	systemEnabled = False
-	prevState = False
-	currState = False
-	print " - System disabled."
+    global lcd
+    lcd.clear()
+    lcd.message("VIGILANTE\nENABLED")
 
 def getFileName():
-	return datetime.datetime.now().strftime("%Y-%m-%d_%H.%M.%S.h264")
+    return datetime.datetime.now().strftime("%Y-%m-%d_%H.%M.%S.h264")
 
 def send_email(fileName):
-	global s3BucketName,s3URL,sendGrid
-	from_email = Email(os.environ.get('FROM_EMAIL'))
-	subject = "Motion alarm"
-	to_email = Email(os.environ.get('TO_EMAIL'))
-	video_link = s3URL + s3BucketName + "/" + fileName
-	content = Content("text/plain", "Someone has penetrated your room. Check video file at " + video_link)
-	mail = Mail(from_email, subject, to_email, content)
-	try:
-		response = sendGrid.client.mail.send.post(request_body=mail.get())
-		print " - Email notification sent."
-	except Exception as e:
-		print " - Error sending the email notification: {0}".format(e)
+    global s3BucketName,s3URL,sendGrid,lcd
+    from_email = Email(os.environ.get('FROM_EMAIL'))
+    subject = "Motion detected"
+    to_email = Email(os.environ.get('TO_EMAIL'))
+    video_link = s3URL + s3BucketName + "/" + fileName
+    content = Content("text/plain", "Motion detected. Check video file at " + video_link)
+    mail = Mail(from_email, subject, to_email, content)
+    try:
+        response = sendGrid.client.mail.send.post(request_body=mail.get())
+        lcd.clear()
+        lcd.message("Email notification\nsent")
+    except Exception as e:
+        lcd.clear()
+        lcd.message("Error sending\nthe email")
 
 def upload_video_to_s3(fileName):
-	print " - Uploading video to S3 ..."
-	data = open(fileName, 'rb')
-	try:
-		s3.Bucket(s3BucketName).put_object(Key=fileName, Body=data)
-		print " - File uploaded succesfully."
-		os.remove(fileName)
-		print " - File removed locally."
-	except Exception as e:
-		print " - Error uploading the file: {0}".format(e)
-
+    global lcd
+    lcd.clear()
+    lcd.message("Uploading\nvideo...")
+    data = open(fileName, 'rb')
+    try:
+        s3.Bucket(s3BucketName).put_object(Key=fileName, Body=data)
+        lcd.clear()
+        lcd.message("Video uploaded\nsuccessfully")
+        os.remove(fileName)
+    except Exception as e:
+        lcd.clear()
+        lcd.message("Error uploading\nvideo")
 
 def destroy():
-	print "\n - Cleaning up everything..."
-	GPIO.output(ledPin, GPIO.LOW) # turn off the led
-	GPIO.cleanup()
-
-def toggleSystem(ev=None):
-	global systemEnabled
-	if systemEnabled:
-		disableSystem()
-	else:
-		print " - Booting up the system ..."
-		for x in range(1,10):
-			GPIO.output(ledPin, GPIO.HIGH)
-			sleep(0.5)
-			GPIO.output(ledPin, GPIO.LOW)
-			sleep(0.5)
-		enableSystem()
+    GPIO.cleanup()
 
 def loop():
-	while True:
-		time.sleep(.1)
-		global systemEnabled,currState,prevState
-		if systemEnabled:
-			prevState = currState
-			currState = GPIO.input(sensorPin)
-			if currState != prevState:
-				if currState:
-					fileName = getFileName()
-					cam.vflip = True
-					cam.hflip = True
-					cam.start_recording(fileName)
-					print " - Motion detected:"
-					print "   - Recording a {0}(s) video in {1}".format(videoDuration,fileName)
-					sleep(videoDuration)
-					cam.stop_recording()
-					print "   - Video recording stopped."
-					upload_video_to_s3(fileName)
-					send_email(fileName)
-					print " - System ready again."
+    global currState,prevState,lcd
+    while True:
+        time.sleep(.1)
+        prevState = currState
+        currState = GPIO.input(sensorPin)
+        if currState != prevState:
+            if currState:
+                fileName = getFileName()
+                cam.vflip = True
+                cam.hflip = True
+                cam.start_recording(fileName)
+                lcd.clear()
+                lcd.message("Motion detected\nRecording ...")
+                sleep(videoDuration)
+                cam.stop_recording()
+                upload_video_to_s3(fileName)
+                send_email(fileName)
+                enableSystem()
 
 if __name__ == '__main__':     # Program start from here
-	print "\n"
-	print "****************"
-	print "* Alarm system *"
-	print "****************"
-	setup()
-	enableSystem()
-	try:
-		loop()
-	except KeyboardInterrupt:  # 'Ctrl+C' pressed
-		destroy()
-		print " - Good bye!"
+    setup()
+    enableSystem()
+    try:
+        loop()
+    except KeyboardInterrupt:  # 'Ctrl+C' pressed
+        destroy()
