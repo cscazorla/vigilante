@@ -35,8 +35,6 @@
                       |               |
                       +---------------+
 
-The capactor is added to debounce the button (104 = 100.000 pF = 0.1 uF)
-
 ----------
 PIR SENSOR
 ----------
